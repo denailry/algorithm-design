@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+    <html>
+    <head>
+        <script 
+            src="http://code.jquery.com/jquery-3.3.1.min.js" 
+            integrity="sha256-FgpCb/KJQlLNfOu91ta32o/NMZxltwRo8QtmkMRdAu8=" 
+            crossorigin="anonymous"></script>
+        <script 
+            src="https://cdnjs.cloudflare.com/ajax/libs/popper.js/1.12.9/umd/popper.min.js" 
+            integrity="sha384-ApNbgh9B+Y1QKtv3Rn7W3mgPxhU9K/ScQsAP7hUibX39j7fakFPskvXusvfa0b4Q" 
+            crossorigin="anonymous"></script>
+    </head>
+    <body>
+        <div id="map" style="width:100%;height:500px">
+        </div>
+        <button id="submit-vertex" onclick="submitVertex()">Submit Vertex</button>
+         <button id="clear-vertex" onclick="clearVertex()" disabled="true">Clear Vertex</button>
+        <button id="submit-edge" onclick="submitEdge()" disabled="true">Submit Edge</button>
+        <button id="clear-edge" onclick="clearEdge()" disabled="true">Clear Edge</button>
+        <button id="submit-search" onclick="searchRoute()" disabled="true">Search</button>
+        <button id="clear-search" onclick="clearRoute()" disabled="true">Clear Search</button>
+        <div id="result"></div> 
+    
+        <script>
+        const INPUT_VERTEX = 0;
+        const INPUT_EDGE = 1;
+        const INPUT_DONE = 2;
+        const INPUT_FINAL = 3;
+        const MAX_LABELS = 52;
+        var inputState = INPUT_VERTEX;
+
+        var labels = 
+            [
+                'A', 'B', 'C', 'D', 'E', 
+                'F', 'G', 'H', 'I', 'J', 
+                'K', 'L', 'M', 'M', 'O', 
+                'P', 'Q', 'R', 'S', 'T', 
+                'U', 'V', 'W', 'X', 'Y',
+                'Z', 'a', 'b', 'c', 'd',
+                'e', 'f', 'g', 'h', 'i',
+                'j', 'k', 'l', 'm', 'n',
+                'o', 'p', 'q', 'r', 's',
+                't', 'u', 'v', 'w', 'x',
+                'y', 'z'
+            ];
+
+        var map = null;
+        var currentPickedVertex = [];
+
+        var markers = [];
+        var distanceMatrix = [];
+        var adjacencyMatrix = [];
+        var edges = [];
+        var paths = [];
+
+        var routes = [];
+
+        function rad(x) {
+          return x * Math.PI / 180;
+        };
+
+        function distance(p1, p2) {
+          var R = 6378137;
+          var dLat = rad(p2.lat() - p1.lat());
+          var dLong = rad(p2.lng() - p1.lng());
+          var a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+            Math.cos(rad(p1.lat())) * Math.cos(rad(p2.lat())) *
+            Math.sin(dLong / 2) * Math.sin(dLong / 2);
+          var c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+          var d = R * c;
+          return d;
+        };
+
+        function searchEdge(v1, v2) {
+            for (i = 0; i < edges.length; ++i) {
+                if ((edges[i].v1 == v1 && edges[i].v2 == v2) || 
+                    (edges[i].v1 == v2 && edges[i].v2 == v1)) {
+                    return i;
+                }
+            }
+            return -1;
+        }
+
+        function changeMarkerColor(marker, color) {
+            marker.setMap(null);
+            marker.icon = "http://denailry.tk/img/others/marker-" + color + ".png";
+            marker.setMap(map);
+        }
+
+        function searchRoute() {
+            $("#submit-search").prop("disabled", true);
+            $("#clear-search").prop("disabled", false);
+            inputState = INPUT_FINAL;
+            var v1Index = markers.indexOf(currentPickedVertex[0]);
+            var v2Index = markers.indexOf(currentPickedVertex[1]);
+            while (currentPickedVertex.length != 0) {
+                changeMarkerColor(currentPickedVertex.pop(), "red");
+            }
+            markers.forEach((marker, index) => {
+                marker.setLabel(labels[index]);
+            });
+            $.ajax({
+                url: "/search-route",
+                type: 'POST',
+                data: JSON.stringify({
+                    distance: distanceMatrix,
+                    adjacency: adjacencyMatrix,
+                    start: v1Index,
+                    goal: v2Index
+                }), 
+                contentType: 'application/json',
+                dataType: 'json',
+                success: function(data) {
+                    $("#result").html("<h2>Routes Distance (meter): " + data.distance.toFixed(2) + "</h2>");
+                    routes = data.routes;
+                    routes.forEach((item, index) => {
+                        changeMarkerColor(markers[item], "green");
+                    });
+
+                    for (j = 1; j < routes.length; ++j) {
+                        v1 = markers[routes[j-1]];
+                        v2 = markers[routes[j]];
+                        eIndex = searchEdge(routes[j-1], routes[j]);
+                        drawPath(v1.position, v2.position, eIndex, "#00FF00", 3);
+                    }
+                }
+            });
+        }
+
+        function clearRoute() {
+            $("#clear-search").prop("disabled", true);
+            $("#submit-search").prop("disabled", false);
+            inputState = INPUT_DONE;
+            for (j = 1; j < routes.length; ++j) {
+                v1 = markers[routes[j-1]];
+                v2 = markers[routes[j]];
+                eIndex = searchEdge(routes[j-1], routes[j]);
+                drawPath(v1.position, v2.position, eIndex);
+            }
+            markers.forEach((marker, index) => {
+                marker.setMap(null);
+                marker.setLabel(null);
+                marker.setMap(map);
+            }); 
+            routes.forEach((item, index) => {
+                changeMarkerColor(markers[item], "red");
+            });
+            $("#result").html("");
+            routes = [];
+        }
+
+        function submitVertex() {
+            $("#submit-vertex").prop("disabled", true);
+            $("#clear-vertex").prop("disabled", false);
+            $("#submit-edge").prop("disabled", false);
+            inputState = INPUT_EDGE;
+
+            markers.forEach((marker, index) => {
+                changeMarkerColor(marker, "red");
+            });
+
+            for (i = 0; i < markers.length; ++i) {
+                var row = [];
+                var blankRow = [];
+                for(j = 0; j < markers.length; ++j) {
+                    if (i == j) {
+                        row.push(0);
+                    } else {
+                        row.push(distance(markers[i].position, markers[j].position));
+                    }
+                    blankRow.push(0);
+                }
+                distanceMatrix.push(row);
+                adjacencyMatrix.push(blankRow);
+            }
+        }
+
+        function submitEdge() {
+            $("#submit-edge").prop("disabled", true);
+            $("#clear-edge").prop("disabled", false);
+            $("#clear-vertex").prop("disabled", true);
+            $("#submit-search").prop("disabled", false);
+            inputState = INPUT_DONE;
+
+            edges.forEach((item, index) => {
+                adjacencyMatrix[item.v1][item.v2] = 1;
+                adjacencyMatrix[item.v2][item.v1] = 1;
+            });
+        }
+
+        function clearEdge() {
+            $("#submit-edge").prop("disabled", false);
+            $("#clear-edge").prop("disabled", true);
+            $("#clear-vertex").prop("disabled", false);
+            $("#submit-search").prop("disabled", true);
+            inputState = INPUT_EDGE;
+
+            currentPickedVertex.forEach((item, index) => {
+                changeMarkerColor(item, "red");
+            });
+            currentPickedVertex = [];
+
+            paths.forEach((item, index) => {
+                item.setMap(null);
+            });
+            paths = [];
+            edges = [];
+        }
+
+        function clearVertex() {
+            $("#submit-vertex").prop("disabled", false);
+            $("#submit-edge").prop("disabled", true);
+            $("#clear-vertex").prop("disabled", true);
+            inputState = INPUT_VERTEX;
+
+            paths.forEach((item, index) => {
+                item.setMap(null);
+            });
+            paths = [];
+            edges = [];
+
+            adjacencyMatrix = [];
+            distanceMatrix = [];
+            markers.forEach((item, index) => {
+                item.setMap(null);
+            });
+            markers = [];
+        }
+
+        function toggleEdge() {
+            var v1 = currentPickedVertex[0];
+            var v2 = currentPickedVertex[1];
+            var v1Index = markers.indexOf(v1);
+            var v2Index = markers.indexOf(v2);
+            var edgeIndex = searchEdge(v1Index, v2Index);
+            var distance = 0;
+            if (edgeIndex == -1) {
+                edges.push({v1: v1Index, v2: v2Index});
+                drawPath(v1.position, v2.position);
+            } else {
+                edges.splice(edgeIndex, 1);
+                removePath(edgeIndex);
+            }
+            changeMarkerColor(v1, 'red');
+            changeMarkerColor(v2, 'red');
+            currentPickedVertex = [];
+        }
+
+        function placeMarker(coordinate) {
+            var marker = new google.maps.Marker({
+                position:coordinate,
+                icon:'http://denailry.tk/img/others/marker-blue.png',
+                map: map
+            });
+            google.maps.event.addListener(marker, 'click', function() {
+                if (inputState == INPUT_VERTEX) {
+                    var index = markers.indexOf(marker);
+                    marker.setMap(null);
+                    markers.splice(index, 1);
+                } else if (inputState != INPUT_FINAL) {
+                    var markerIndex = currentPickedVertex.indexOf(marker); 
+                    if (markerIndex == -1) {
+                        if (inputState == INPUT_DONE && currentPickedVertex.length == 2) {
+                            changeMarkerColor(currentPickedVertex.pop(), "red");
+                        }   
+                        currentPickedVertex.push(marker);
+                        changeMarkerColor(marker, 'blue');
+                        if (inputState == INPUT_EDGE && currentPickedVertex.length == 2) {
+                            toggleEdge();
+                        }
+                    } else {
+                        currentPickedVertex.splice(markerIndex, 1);
+                        changeMarkerColor(marker, 'red');
+                    }
+                }
+            });
+            markers.push(marker);
+        }
+
+        function drawPath(point1, point2, index=null, color=null, size=null) {
+            var strokeColor = '#FF0000';
+            if (color != null) {
+                strokeColor = color;
+            }
+            var strokeWeight = 2;
+            if (size != null) {
+                strokeWeight = size;
+            }
+            var path = new google.maps.Polyline({
+              path: [point1, point2],
+              geodesic: true,
+              strokeColor: strokeColor,
+              strokeOpacity: 1.0,
+              strokeWeight: strokeWeight
+            });
+            path.setMap(map);
+            if (index != null) {
+                paths[index].setMap(null);
+                paths[index] = path;
+            } else {
+                paths.push(path);               
+            }
+        }
+
+        function removePath(index) {
+            paths[index].setMap(null);
+            paths.splice(index, 1);
+        }
+
+        function myMap() {
+          var myCenter = new google.maps.LatLng(-6.890952, 107.610555);
+          var mapCanvas = document.getElementById("map");
+          var mapOptions = {center: myCenter, zoom: 16};
+          map = new google.maps.Map(mapCanvas, mapOptions);
+
+          google.maps.event.addListener(map,'click',function(event) {
+                if (inputState == INPUT_VERTEX) {
+                    point = ",";
+                    point = event.latLng.lat() + point;
+                    point = point + event.latLng.lng();
+                    $.ajax({
+                        url: "https://roads.googleapis.com/v1/nearestRoads",
+                        type: 'GET',
+                        data: {
+                            points: point,
+                            key: "AIzaSyDccaiomxTLMTtM99HDBojorijy_xYrzP0"
+                        }, 
+                        success: function(data) {
+                            if (!jQuery.isEmptyObject(data)) {
+                                loc = data.snappedPoints[0].location;
+                                placeMarker({lat: loc.latitude, lng: loc.longitude});
+                            } else {
+                                placeMarker(event.latLng);
+                            }
+                        }
+                    });
+                    
+                    
+                }
+          });
+        }
+        </script>
+
+        <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyDgYW0EwKsjVRVA2-XlA56Xbv8UijALFdk&callback=myMap"></script>
+    </body>
+</html>
