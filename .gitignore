@@ -1,0 +1,4 @@
+.vs
+.dat
+topological-sort/bin/*
+topological-sort/obj/*
